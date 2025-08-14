@@ -1,12 +1,12 @@
 import requests
-import boto3
+# import boto3
 import requests
 import json
 import time
 import pandas as pd
 
 
-kinesis_client = boto3.client('kinesis', region_name='us-east-1')
+# kinesis_client = boto3.client('kinesis', region_name='us-east-1')
 
 def send_to_kinesis(data):
     # Send data to Kinesis stream
@@ -15,7 +15,7 @@ def send_to_kinesis(data):
     partition_key = data.get('flight_date', 'unknown-date')
     data_record = json.dumps(data)
 
-    kinesis_client.put_record(StreamName='Flight-API-Data-Stream', Data=data_record, PartitionKey= partition_key)
+    # kinesis_client.put_record(StreamName='Flight-API-Data-Stream', Data=data_record, PartitionKey= partition_key)
 
 
 def invoke_api():
