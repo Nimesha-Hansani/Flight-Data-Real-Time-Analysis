@@ -1,40 +1,103 @@
-import requests
-# import boto3
+from fastapi import FastAPI
 import requests
 import json
+import threading
 import time
-import pandas as pd
+import os
+from datetime import datetime, timezone
 
+app = FastAPI()
 
-# kinesis_client = boto3.client('kinesis', region_name='us-east-1')
+# Configuration
+API_KEY = 'b9a99cfbc2971adba7d9b72b3264a66d'  # Use env variable in App Runner
+API_URL = "http://api.aviationstack.com/v1/flights"
+OFFSET_FILE = "offset.json"
+LIMIT = 5
+FETCH_INTERVAL = 10  # seconds between each batch fetch
 
-def send_to_kinesis(data):
-    # Send data to Kinesis stream
-    
-    # Use the flight_date as the partition key
-    partition_key = data.get('flight_date', 'unknown-date')
-    data_record = json.dumps(data)
+# In-memory cache for flights
+latest_flights = []
 
-    # kinesis_client.put_record(StreamName='Flight-API-Data-Stream', Data=data_record, PartitionKey= partition_key)
+# Load offset from JSON file
+def load_offset():
+    if os.path.exists(OFFSET_FILE):
+        with open(OFFSET_FILE, "r") as f:
+            data = json.load(f)
+            saved_date = data.get("date")
+            saved_offset = data.get("offset", 0)
 
+            # Reset offset if a new day
+            if saved_date != datetime.now(timezone.utc).strftime("%Y-%m-%d"):
+                return 0
+            return saved_offset
+    return 0
 
-def invoke_api():
+# Save offset to JSON file
+def save_offset(offset):
+    with open(OFFSET_FILE, "w") as f:
+        json.dump({
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "offset": offset
+        }, f)
 
-
-    api_endpoint = 'https://api.aviationstack.com/v1/flights'
+# Fetch flights from API
+def fetch_flights(offset):
     params = {
-            'access_key': 'b9a99cfbc2971adba7d9b72b3264a66d',
-            'limit': 5
+        "access_key": API_KEY,
+        "limit": LIMIT,
+        "offset": offset
     }
+    response = requests.get(API_URL, params=params)
+    response.raise_for_status()
+    data = response.json()
+    return data.get("data", [])
 
-    response = requests.get('https://api.aviationstack.com/v1/flights', params = params)
+# Background thread to fetch flights continuously
+def background_fetch():
+    global latest_flights
+    offset = load_offset()
 
-    json_response = response.json()
+    while True:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    for flight in json_response['data']:
-        # print(flight)
-        send_to_kinesis(flight)
+        try:
+            flights = fetch_flights(offset)
+            print(flights)
+            if not flights:
+                # No more flights today, wait until next day
+                print("No more flights available for today. Sleeping until next day.")
+                while datetime.now(timezone.utc).strftime("%Y-%m-%d") == today:
+                    time.sleep(60)  # Check once a minute for a new day
+                offset = 0
+                latest_flights = []
+                continue
 
+            # Add new flights to cache
+            latest_flights.extend(flights)
+            print(f"Fetched {len(flights)} flights. Offset: {offset}")
 
+            # Increment offset for next batch
+            offset += LIMIT
+            save_offset(offset)
+
+            time.sleep(FETCH_INTERVAL)
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching flight data: {e}")
+            time.sleep(FETCH_INTERVAL)
+
+# Start background thread when FastAPI starts
+@app.on_event("startup")
+def startup_event():
+    thread = threading.Thread(target=background_fetch, daemon=True)
+    thread.start()
+
+# Endpoint to get latest flights
+@app.get("/flights")
+def get_flights():
+    return latest_flights
+
+# Run locally
 if __name__ == "__main__":
-    invoke_api()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
