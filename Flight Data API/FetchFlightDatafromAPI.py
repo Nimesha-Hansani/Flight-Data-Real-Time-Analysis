@@ -5,6 +5,7 @@ import threading
 import time
 import os
 from datetime import datetime, timezone
+import uvicorn
 
 app = FastAPI()
 
@@ -99,5 +100,5 @@ def get_flights():
 
 # Run locally
 if __name__ == "__main__":
-    import uvicorn
+   
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
